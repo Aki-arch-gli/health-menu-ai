@@ -76,15 +76,27 @@ from modules.event_service import get_home_events, refresh_events
 def hash_pass(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-# 2. 外部通信（イベント・ニュース取得）を初回1回のみ＆1時間キャッシュ化
-@st.cache_data(ttl=3600*12, show_spinner=False)
-def load_external_data():
+def background_data_update():
+    """バックグラウンドスレッドで外部更新処理を非同期実行"""
     try:
         refresh_events()
         update_news()
-        return True
     except Exception:
-        return False
+        pass
+
+def run_background_update_if_needed():
+    """12時間に1回、バックグラウンドで更新処理を呼び出す"""
+    last_update = st.session_state.get("last_background_update")
+    now = datetime.datetime.now()
+    
+    # 初回または前回の更新から12時間以上経過している場合にバッチ実行
+    if last_update is None or (now - last_update).total_seconds() > 3600 * 12:
+        st.session_state.last_background_update = now
+        thread = threading.Thread(target=background_data_update, daemon=True)
+        thread.start()
+
+# バックグラウンドバッチ処理の起動
+run_background_update_if_needed()
 
 @st.cache_data(ttl=3600*12, show_spinner=False)
 def get_daily_events():
@@ -96,6 +108,18 @@ def get_daily_events():
         except Exception:
             return []
     return []
+
+# 初回読み込み完了フラグの初期化
+if "data_loaded" not in st.session_state:
+    st.session_state.data_loaded = False
+
+# 不要な待機（time.sleep）を削除
+if not st.session_state.data_loaded:
+    daily_events = get_daily_events()
+    st.session_state.daily_events = daily_events
+    st.session_state.data_loaded = True
+else:
+    daily_events = st.session_state.get("daily_events", [])
 
 # 初回読み込み完了フラグの初期化
 if "data_loaded" not in st.session_state:
